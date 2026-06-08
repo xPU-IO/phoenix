@@ -13,3 +13,4 @@ sc25/result*
 sc25/logs/*
 build/
 *.so
+.codebuddy/*

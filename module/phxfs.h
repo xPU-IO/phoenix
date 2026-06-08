@@ -30,6 +30,7 @@ struct phxfs_dev {
     unsigned int devfn;
     u64 size; /* HBM pci bar 4 size */
     u64 paddr; /* HBM bus address space addr */
+    struct resource pgmap_res;
     struct device device; /* char device. */
     struct cdev cdev;
     int idx;

@@ -1,10 +1,13 @@
 cmake_minimum_required (VERSION 3.18)
+
+set (CMAKE_CUDA_ARCHITECTURES 90)
+
 project (libphoenix LANGUAGES CUDA C CXX)
 
 set (CMAKE_C_STANDARD 99)
 set (CMAKE_CXX_STANDARD 20)
+set (CMAKE_CXX_STANDARD_REQUIRED ON)
 set (CMAKE_CUDA_STANDARD 20)
-set (CMAKE_CUDA_ARCHITECTURES 90)
 
 find_package (Threads REQUIRED)
 find_package (CUDA 12.4 REQUIRED)
@@ -45,9 +48,17 @@ set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra ${flags}" CACHE INTERNAL "" F
 set (CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_DEBUG} -g -DDEBUG" CACHE INTERNAL "" FORCE)
 set (CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O2" CACHE INTERNAL "" FORCE)
 # CXX_FLAGS
-set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -std=c++20" CACHE INTERNAL "" FORCE)
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra" CACHE INTERNAL "" FORCE)
 set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG " CACHE INTERNAL "" FORCE)
-set (CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -std=c++20" CACHE INTERNAL "" FORCE)
+set (CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2" CACHE INTERNAL "" FORCE)
+
+# GCC 8 requires linking stdc++fs for std::filesystem support
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0")
+    set(FS_LIBRARY stdc++fs)
+else()
+    set(FS_LIBRARY "")
+endif()
+
 
 if (no_cc)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D__NO_COHERENCE__")
@@ -158,7 +169,7 @@ macro (make_benchmark target binary_name files)
 
     add_dependencies (${target} libphoenix)
     target_include_directories(${target} PRIVATE ${benchmarks_utils} ${libphoenix_root}/include ${LIBURING_INCLUDE_DIRS})
-    target_link_libraries (${target} libphoenix ${CUFILE_LIBRARIES}  CUDA::cudart cuda ${LIBURING_LIBRARIES} ${DL_LIB} Threads::Threads)
+    target_link_libraries (${target} libphoenix ${CUFILE_LIBRARIES}  CUDA::cudart cuda ${LIBURING_LIBRARIES} ${DL_LIB} Threads::Threads ${FS_LIBRARY})
     set_target_properties (${target} PROPERTIES OUTPUT_NAME "${binary_name}")
 
     list (APPEND benchmark_targets "${target}")

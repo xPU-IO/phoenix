@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cuda_runtime.h>
+#include <sys/syscall.h>
 #include "phoenix.h"
 #include "kvcache_reader.hh"
 #include "cufile_sample_utils.h"
@@ -269,7 +270,14 @@ PhxfsKVCacheReader::PhxfsKVCacheReader(size_t max_batch_size_, int device_id_)
         throw std::runtime_error("io_uring_queue_init failed: " + std::to_string(ret));
     }
 
-    ret = io_uring_enter(ring.ring_fd, 0, 0, IORING_ENTER_SQ_WAKEUP, NULL);
+//    ret = io_uring_enter(ring.ring_fd, 0, 0, IORING_ENTER_SQ_WAKEUP, NULL);
+    ret = syscall(__NR_io_uring_enter,
+              ring.ring_fd,
+              0,
+              0,
+              IORING_ENTER_SQ_WAKEUP,
+              NULL,
+              0);
 
 }
 

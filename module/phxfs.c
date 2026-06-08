@@ -86,11 +86,22 @@ static int phxfs_devm_memremap(struct phxfs_dev *phx_dev) {
 	printk("npu_devm_memremap 1\n");
 	pgmap = &phx_dev->p2p_pgmap->pgmap;
 
-	pgmap->range.start = phx_dev->paddr;
-	pgmap->range.end = phx_dev->paddr + phx_dev->size - 1;
-	printk("npu->pgmap->res.start is %llx, end is %llx\n", pgmap->range.start,
-			pgmap->range.end);
-	pgmap->nr_range = 1;
+	// pgmap->range.start = phx_dev->paddr;
+	// pgmap->range.end = phx_dev->paddr + phx_dev->size - 1;
+	// printk("npu->pgmap->res.start is %llx, end is %llx\n", pgmap->range.start,
+	// 		pgmap->range.end);
+	// pgmap->nr_range = 1;
+	// pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
+
+	phx_dev->pgmap_res.start = phx_dev->paddr;
+	phx_dev->pgmap_res.end = phx_dev->paddr + phx_dev->size - 1;		
+	phx_dev->pgmap_res.flags = IORESOURCE_MEM;
+
+	printk("npu->pgmap->res.start is %llx, end is %llx\n",
+    	phx_dev->pgmap_res.start,
+       	phx_dev->pgmap_res.end);
+
+	pgmap->res = phx_dev->pgmap_res;
 	pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
 
 	phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
@@ -123,7 +134,8 @@ static int phxfs_ctrl_init(struct phxfs_ctrl *dev_ctrl, u32 dev_num) {
 			printk("npu%u: pci_get_domain_bus_and_slot failed\n", i);
 			return -1;
 		}
-		for (j = 0; j < PCI_STD_NUM_BARS; j++) {
+		// for (j = 0; j < PCI_STD_NUM_BARS; j++) {
+		for (j = 0; j <= PCI_STD_RESOURCE_END; j++) {
 			size = pci_resource_len(dev_ctrl->phx_dev[i].dev, j);
 			if (size > dev_ctrl->phx_dev[i].size){
 				dev_ctrl->phx_dev[i].paddr = pci_resource_start(dev_ctrl->phx_dev[i].dev, j);

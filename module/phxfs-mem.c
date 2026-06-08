@@ -120,6 +120,7 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
     u64 pci_bar_off;
     u64 cpu_vaddr;
     unsigned long total_pages;
+    unsigned long k;
     int ret, i, j;
 
     vma = mbuffer->vma;
@@ -211,13 +212,27 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
             mbuffer->ppages[i * mbuffer->subpage_num + j] = virt_to_page(cpu_vaddr + j * PAGE_SIZE);
         }
     }
-    
+
+
+    for (k = 0; k < total_pages; k++) {
+        ret = vm_insert_page(vma,
+                             mbuffer->c_vaddr + k * PAGE_SIZE,
+                             mbuffer->ppages[k]);
+        if (ret) {
+            printk("vm_insert_page failed, k=%lu, ret=%d\n", k, ret);
+            goto out;
+        }
+    }
+
+    /**
+
     ret = vm_insert_pages(vma, mbuffer->c_vaddr, mbuffer->ppages, &total_pages);
     
     if (ret && total_pages) {
         printk("vm_insert_pages failed\n");
         goto out;
     }
+    **/
     mbuffer->remap = 1;
     return ret;
     
