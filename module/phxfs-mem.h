@@ -50,6 +50,13 @@ void phxfs_mbuffer_init(void);
 void phxfs_mbuffer_put(phxfs_mmap_buffer_t pbuffer);
 phxfs_mmap_buffer_t phxfs_mbuffer_get(unsigned long base_index);
 
+/*
+ * Look up the virtual address for a BAR offset using multi-segment mapping.
+ * Returns the virtual address, or NULL if the offset doesn't fall in any segment.
+ * For legacy single-segment devices, falls back to pci_mem_va + bar_offset.
+ */
+void *phxfs_bar_offset_to_va(struct phxfs_dev *dev, u64 bar_offset);
+
 struct vmnga_pci_dev_info {
     u8 bus_no;
     u8 device_no;

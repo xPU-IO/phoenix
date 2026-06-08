@@ -11,6 +11,16 @@
 
 #define MAX_DEV_NUM 16
 
+#define PHXFS_REMAP_UNIT_SIZE  ((u64)16 * 1024 * 1024)  /* 16 MiB per remap unit */
+#define PHXFS_RESERVED_SIZE    ((u64)128 * 1024 * 1024)  /* 128 MiB reserved at head/tail */
+
+struct phxfs_bar_segment {
+	u64 phys_start;    /* physical start address of this segment */
+	u64 size;          /* segment size (multiple of PHXFS_REMAP_UNIT_SIZE) */
+	void *va;          /* virtual address from devm_memremap_pages */
+	struct pci_p2pdma_pagemap *p2p_pgmap;
+};
+
 struct pci_p2pdma {
     struct gen_pool *pool;
     bool p2pmem_published;
@@ -34,11 +44,13 @@ struct phxfs_dev {
     struct device device; /* char device. */
     struct cdev cdev;
     int idx;
-    struct pci_p2pdma_pagemap *p2p_pgmap; /* struct dev_pagemap pgmap; */
+    struct pci_p2pdma_pagemap *p2p_pgmap; /* legacy single-segment pgmap (kept for compat) */
     void *dev_remap_addr;
-    void __iomem *pci_mem_va; /* get from devm_memremap_pages */
+    void __iomem *pci_mem_va; /* legacy single-segment VA (kept for compat) */
     bool remap;
     unsigned int dev_page_size;
+    struct phxfs_bar_segment *segments; /* dynamically allocated segment array */
+    int num_segments;    /* number of successfully mapped segments */
 };
 
 struct phxfs_ctrl {

@@ -19,6 +19,48 @@ static DEFINE_HASHTABLE(phxfs_io_mbuffer_hash, PHXFS_MAX_SHADOW_ALLOCS_ORDER);
 static spinlock_t lock ____cacheline_aligned; 
 atomic_t base_index_cnt = ATOMIC_INIT(0);
 
+/*
+ * Look up the virtual address for a BAR offset using multi-segment mapping.
+ * Uses binary search on segments array for efficiency.
+ * For legacy single-segment devices (segments == NULL), falls back to
+ * pci_mem_va + bar_offset.
+ */
+void *phxfs_bar_offset_to_va(struct phxfs_dev *dev, u64 bar_offset)
+{
+	int lo, hi, mid;
+	u64 phys_addr;
+
+	/* Legacy single-segment path */
+	if (!dev->segments || dev->num_segments <= 0) {
+		if (dev->pci_mem_va && bar_offset < dev->size)
+			return dev->pci_mem_va + bar_offset;
+		return NULL;
+	}
+
+	phys_addr = dev->paddr + bar_offset;
+
+	/* Binary search: find the segment containing phys_addr */
+	lo = 0;
+	hi = dev->num_segments - 1;
+	while (lo <= hi) {
+		u64 seg_start, seg_end;
+		mid = lo + (hi - lo) / 2;
+		seg_start = dev->segments[mid].phys_start;
+		seg_end = seg_start + dev->segments[mid].size;
+
+		if (phys_addr < seg_start) {
+			hi = mid - 1;
+		} else if (phys_addr >= seg_end) {
+			lo = mid + 1;
+		} else {
+			/* Found: phys_addr is within [seg_start, seg_end) */
+			return dev->segments[mid].va + (phys_addr - seg_start);
+		}
+	}
+
+	return NULL;
+}
+
 void unmap_and_release(struct p2p_vmap* map)
 {
     if (map->release != NULL && map->data != NULL)
@@ -207,7 +249,13 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
     
     for (i = 0; i < nr_dev_pages; i++) {
         pci_bar_off = dev_page_addrs[i] - mbuffer->dev->paddr;
-        cpu_vaddr = (uint64_t)(mbuffer->dev->pci_mem_va + pci_bar_off);
+        cpu_vaddr = (uint64_t)phxfs_bar_offset_to_va(mbuffer->dev, pci_bar_off);
+        if (cpu_vaddr == 0) {
+            printk("phxfs_map_dev_addr_inner: bar_offset 0x%llx not in any segment\n",
+                   pci_bar_off);
+            ret = -EFAULT;
+            goto out;
+        }
         for (j = 0; j < mbuffer->subpage_num; j++) {
             mbuffer->ppages[i * mbuffer->subpage_num + j] = virt_to_page(cpu_vaddr + j * PAGE_SIZE);
         }
