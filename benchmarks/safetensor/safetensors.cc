@@ -53,7 +53,8 @@
 #define GPU_PAGE_SIZE 64 * 1024
 #define PAGE_SIZE 4096
 
-static int device_id = 0;
+static int device_id = 4;
+static int phxfs_dev_id = -1;  // will be resolved via phxfs_find_dev_for_cuda_gpu
 static inline uint64_t tenser_to_device_phxfs(safetensors::safetensors_t &st, int fd){
   std::string key;
   safetensors::tensor_t tensor;
@@ -80,13 +81,13 @@ static inline uint64_t tenser_to_device_phxfs(safetensors::safetensors_t &st, in
     CUDA_CHECK_ERROR(cudaMalloc(&tensor.dev_ptr, alloc_size));
     
     void *host_ptr = nullptr;
-    auto ret = phxfs_regmem(device_id, tensor.dev_ptr, alloc_size, &host_ptr);
+    auto ret = phxfs_regmem(phxfs_dev_id, tensor.dev_ptr, alloc_size, &host_ptr);
     if (ret){
       std::cerr << "phxfs_regmem error, ret is " << ret << ", size is " << alloc_size << "\n";
       return -1;
     }
 
-    ssize_t result = phxfs_read({.fd = fd, .deviceID = device_id},
+    ssize_t result = phxfs_read({.fd = fd, .deviceID = phxfs_dev_id},
       tensor.dev_ptr, 0,
       aligned_size, aligned_offset);
 
@@ -99,7 +100,7 @@ static inline uint64_t tenser_to_device_phxfs(safetensors::safetensors_t &st, in
       break;
     }
     total_file_size += size;
-    PHXFS_CHECK_ERROR(phxfs_deregmem(device_id, tensor.dev_ptr, alloc_size));
+    PHXFS_CHECK_ERROR(phxfs_deregmem(phxfs_dev_id, tensor.dev_ptr, alloc_size));
   }
   return total_file_size;
 }
@@ -146,7 +147,7 @@ int load_safetensors_phxfs(std::string &dir) {
     struct timespec start, end;
   
     CUDA_CHECK_ERROR(cudaSetDevice(device_id));
-    PHXFS_CHECK_ERROR(phxfs_open(device_id));
+    PHXFS_CHECK_ERROR(phxfs_open(phxfs_dev_id));
   
     std::string files = std::filesystem::path(dir).string();
     for (const auto& entry : std::filesystem::directory_iterator(dir)){
@@ -183,7 +184,7 @@ int load_safetensors_phxfs(std::string &dir) {
         CUDA_CHECK_ERROR(cudaFree(tensor.dev_ptr));
     }
   
-    PHXFS_CHECK_ERROR(phxfs_close(device_id));
+    PHXFS_CHECK_ERROR(phxfs_close(phxfs_dev_id));
   
     return EXIT_SUCCESS;
   }
@@ -194,7 +195,7 @@ static inline uint64_t tenser_to_device_gds(safetensors::safetensors_t &st, CUfi
     std::string key;
     safetensors::tensor_t tensor;
     uint64_t total_file_size = 0;
-    CUDA_CHECK_ERROR(cudaSetDevice(0));
+    CUDA_CHECK_ERROR(cudaSetDevice(device_id));
     for (size_t idx = 0; idx < st.tensors.size(); idx++) {
       key = st.tensors.keys()[idx];
       st.tensors.at(idx, &tensor);
@@ -267,7 +268,7 @@ int load_safetensors_gds(std::string &dir) {
   
     std::string files = std::filesystem::path(dir).string();
   
-    CUDA_CHECK_ERROR(cudaSetDevice(0));
+    CUDA_CHECK_ERROR(cudaSetDevice(device_id));
     CUFILE_CHECK_ERROR(cuFileDriverOpen());
   
     for (const auto& entry : std::filesystem::directory_iterator(dir)){
@@ -312,7 +313,7 @@ static inline uint64_t tenser_to_device_native(safetensors::safetensors_t &st){
   std::string key;
   safetensors::tensor_t tensor;
   uint64_t total_file_size = 0;
-  CUDA_CHECK_ERROR(cudaSetDevice(0));
+  CUDA_CHECK_ERROR(cudaSetDevice(device_id));
   for (size_t idx = 0; idx < st.tensors.size(); idx++) {
     key = st.tensors.keys()[idx];
     st.tensors.at(idx, &tensor);
@@ -362,8 +363,8 @@ int load_safetensors_native(std::string &dir) {
     safetensors::safetensors_t st;
     struct timespec start, end;
   
-    CUDA_CHECK_ERROR(cudaSetDevice(0));
-  
+    CUDA_CHECK_ERROR(cudaSetDevice(device_id));
+
     // CUDA_CHECK_ERROR(status)
   
     std::string files = std::filesystem::path(dir).string();
@@ -413,6 +414,15 @@ int main(int argc, char *argv[]) {
     std::string dir = argv[1];
     int type = atoi(argv[2]);
     device_id = atoi(argv[3]);
+    
+    // Resolve phxfs_dev_id from CUDA GPU ID for phxfs mode
+    if (type == 0) {
+        phxfs_dev_id = phxfs_find_dev_for_cuda_gpu(device_id);
+        if (phxfs_dev_id < 0) {
+            std::cerr << "No phxfs device found for CUDA GPU " << device_id << std::endl;
+            return -1;
+        }
+    }
     
     switch (type) {
         case 0:

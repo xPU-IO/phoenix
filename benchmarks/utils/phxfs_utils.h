@@ -81,6 +81,7 @@ typedef struct{
     size_t io_size;
     int io_depth;
     int gpu_id;
+    int phxfs_device_id = -1;  // -1 means auto-detect via phxfs_find_dev_for_cuda_gpu
     int num_threads;
     int xfer_mode;
 }GDSOpts;
@@ -126,7 +127,7 @@ static inline void thread_prep(GDSThread *threads, int num_threads){
     for (int i = 0;i < num_threads; i ++){
         ThreadData *data = &threads[i].data;
         data->thread_id = i;
-        data->device_id = 0;
+        data->device_id = -1;
         data->offset = 0;
         data->size = 0;
         data->io_size = 0;
@@ -151,6 +152,7 @@ static inline void infoGDSOpts(const GDSOpts& opts) {
     std::cout << "  length: " << opts.length << std::endl;
     std::cout << "  io_size: " << opts.io_size << std::endl;
     std::cout << "  gpu_id: " << opts.gpu_id << std::endl;
+    std::cout << "  phxfs_device_id: " << opts.phxfs_device_id << std::endl;
     std::cout << "  num_threads: " << opts.num_threads << std::endl;
     std::cout << "  xfer_mode: " << opts.xfer_mode << std::endl;
     std::cout << "  io_depth: " << opts.io_depth << std::endl;
@@ -182,13 +184,14 @@ static inline void printHelp(const char *progName) {
     std::cerr << "  -l, --length <length>        Set the length of the data (e.g., 1MB, 512KB)" << std::endl;
     std::cerr << "  -s, --size <size>            Set the IO size (e.g., 1KB, 64KB, etc.)" << std::endl;
     std::cerr << "  -d, --device <gpu_id>        Set the GPU device id" << std::endl;
+    std::cerr << "  -p, --phxfs_device <id>      Set the Phoenix device id (default: auto-detect)" << std::endl;
     std::cerr << "  -t, --threads <num_threads>  Set the number of threads" << std::endl;
     std::cerr << "  -x, --xfer_mode <mode>       Set the transfer mode (integer value)" << std::endl;
     std::cerr << "  -i, --iodepth <depth>        Set the IO depth (number of simultaneous IOs)" << std::endl;
     std::cerr << "  -h, --help                   Show this help message" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Example usage:" << std::endl;
-    std::cerr << "  " << progName << " -m write -a 1 -f /path/to/file -l 1GB -s 64KB -d 0 -t 4 -x 1 -i 32" << std::endl;
+    std::cerr << "  " << progName << " -m write -a 1 -f /path/to/file -l 1GB -s 64KB -d 4 -p 0 -t 4 -x 1 -i 32" << std::endl;
 }
 
 static inline ssize_t get_size(std::string optarg){
@@ -218,6 +221,7 @@ static inline bool parseOpts(int argc, char *argv[], GDSOpts &args) {
         {"length", required_argument, nullptr, 'l'},
         {"size", required_argument, nullptr, 's'},
         {"device", required_argument, nullptr, 'd'},
+        {"phxfs_device", required_argument, nullptr, 'p'},
         {"threads", required_argument, nullptr, 't'},
         {"xfer_mode", required_argument, nullptr, 'x'},
         {"iodepth", required_argument, nullptr, 'i'},
@@ -225,7 +229,7 @@ static inline bool parseOpts(int argc, char *argv[], GDSOpts &args) {
         {nullptr, 0, nullptr, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "m:a:f:l:s:d:t:x:i:h", long_options, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "m:a:f:l:s:d:p:t:x:i:h", long_options, nullptr)) != -1) {
         switch (opt) {
             case 'm': // mode
                 args.mode = (std::strcmp(optarg, "write") == 0);
@@ -245,6 +249,9 @@ static inline bool parseOpts(int argc, char *argv[], GDSOpts &args) {
             }
             case 'd': // gpu_id
                 args.gpu_id = std::stoi(optarg);
+                break;
+            case 'p': // phxfs_device_id
+                args.phxfs_device_id = std::stoi(optarg);
                 break;
             case 't': // num_threads
                 args.num_threads = std::stoi(optarg);

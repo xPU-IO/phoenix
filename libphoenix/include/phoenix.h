@@ -41,6 +41,7 @@ struct phxfs_xfer_addr{
 
 int phxfs_open(int device_id);
 int phxfs_close(int device_id);
+int phxfs_find_dev_for_cuda_gpu(int cuda_gpu_id);
 ssize_t phxfs_read(phxfs_fileid_t fid, void *buf, off_t buf_offset, ssize_t nbyte, off_t f_offset);
 ssize_t phxfs_write(phxfs_fileid_t fid, void *buf, off_t buf_offset, ssize_t nbyte, off_t f_offset);
 

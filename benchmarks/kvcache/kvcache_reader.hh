@@ -23,23 +23,37 @@ public:
 
 class PhxfsKVCacheReader : public BaseKVCacheReader {
 public:
-    PhxfsKVCacheReader(size_t max_batch_size = 2048, int device_id = 0);
+    PhxfsKVCacheReader(size_t max_batch_size = 2048, int gpu_id = -1, int phxfs_dev_id = -1);
     ~PhxfsKVCacheReader();
+    void load_sequences(const std::string& trace_file) override;
+    void process_all_sequences() override;
+
+private:
+    int fd, gpu_id, phxfs_dev_id;
+    void **devPtrs;
+    void **host_ptrs;
+    std::vector<Sequence> sequences;
+    size_t max_batch_size;
+};
+
+class KVCacheNativeReader : public BaseKVCacheReader {
+public:
+    KVCacheNativeReader(size_t max_batch_size = 2048, int device_id = -1);
+    ~KVCacheNativeReader();
     void load_sequences(const std::string& trace_file) override;
     void process_all_sequences() override;
 
 private:
     int fd, device_id;
     void **devPtrs;
-    void **host_ptrs;
+    void **cpuPtrs;
     std::vector<Sequence> sequences;
-    struct io_uring ring;
     size_t max_batch_size;
 };
 
 class CuFileKVCacheReader : public BaseKVCacheReader {
 public:
-    CuFileKVCacheReader(size_t max_batch_size = 256);
+    CuFileKVCacheReader(size_t max_batch_size = 256, int device_id = -1);
     ~CuFileKVCacheReader();
     void load_sequences(const std::string& trace_file) override;
     void process_all_sequences() override;
@@ -48,6 +62,7 @@ private:
     CUfileHandle_t cf_handle;
     CUfileBatchHandle_t batch_id;
     int fd;
+    int device_id;
     void **devPtrs;
     std::vector<Sequence> sequences;
     size_t max_batch_size;

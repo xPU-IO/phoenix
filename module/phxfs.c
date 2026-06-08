@@ -45,6 +45,10 @@ struct phxfs_ctrl ctrl;
 u32 npu_num;
 extern uint64_t gpu_info_table[MAX_GPU_DEVS];
 
+int phxfs_numa_node = -1;
+module_param(phxfs_numa_node, int, 0644);
+MODULE_PARM_DESC(phxfs_numa_node, "Target NUMA node for GPU filtering (-1 = no filter)");
+
 #define PHXFS_PAT_PATH "/sys/kernel/debug/x86/pat_memtype_list"
 #define PHXFS_PAT_BUF_SIZE (64 * 1024) /* PAT file typically < 16 KiB */
 
@@ -416,48 +420,48 @@ static int phxfs_devm_memremap(struct phxfs_dev *phx_dev) {
 fallback_single:
 	/* Legacy single-segment full BAR remap */
 	{
-	struct dev_pagemap *pgmap;
+		struct dev_pagemap *pgmap;
 
-	phx_dev->p2p_pgmap = devm_kzalloc(&phx_dev->dev->dev,
-									sizeof(struct pci_p2pdma_pagemap), GFP_KERNEL);
+		phx_dev->p2p_pgmap = devm_kzalloc(&phx_dev->dev->dev,
+						    sizeof(struct pci_p2pdma_pagemap), GFP_KERNEL);
 		if (!phx_dev->p2p_pgmap)
-		return -ENOMEM;
+			return -ENOMEM;
 
 	printk("npu_devm_memremap 1\n");
-	pgmap = &phx_dev->p2p_pgmap->pgmap;
+		pgmap = &phx_dev->p2p_pgmap->pgmap;
 
-	// pgmap->range.start = phx_dev->paddr;
-	// pgmap->range.end = phx_dev->paddr + phx_dev->size - 1;
-	// printk("npu->pgmap->res.start is %llx, end is %llx\n", pgmap->range.start,
-	// 		pgmap->range.end);
-	// pgmap->nr_range = 1;
-	// pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
+		// pgmap->range.start = phx_dev->paddr;
+		// pgmap->range.end = phx_dev->paddr + phx_dev->size - 1;
+		// printk("npu->pgmap->res.start is %llx, end is %llx\n", pgmap->range.start,
+		// 		pgmap->range.end);
+		// pgmap->nr_range = 1;
+		// pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
 
-	phx_dev->pgmap_res.start = phx_dev->paddr;
-	phx_dev->pgmap_res.end = phx_dev->paddr + phx_dev->size - 1;		
-	phx_dev->pgmap_res.flags = IORESOURCE_MEM;
+		phx_dev->pgmap_res.start = phx_dev->paddr;
+		phx_dev->pgmap_res.end = phx_dev->paddr + phx_dev->size - 1;
+		phx_dev->pgmap_res.flags = IORESOURCE_MEM;
 
 	printk("npu->pgmap->res.start is %llx, end is %llx\n",
     	phx_dev->pgmap_res.start,
        	phx_dev->pgmap_res.end);
 
-	pgmap->res = phx_dev->pgmap_res;
-	pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
+		pgmap->res = phx_dev->pgmap_res;
+		pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
 
-	phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
+		phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
 
 	printk("npu numa is %d\n", phx_dev->dev->dev.numa_node);
 
-	if (IS_ERR_OR_NULL(phx_dev->pci_mem_va)) {
+		if (IS_ERR_OR_NULL(phx_dev->pci_mem_va)) {
 			printk(KERN_ERR "phxfs%d: fallback devm_memremap_pages failed\n",
 			       phx_dev->idx);
-		devm_kfree(&phx_dev->dev->dev, phx_dev->p2p_pgmap);
+			devm_kfree(&phx_dev->dev->dev, phx_dev->p2p_pgmap);
 			return -ENOMEM;
-	}
+		}
 
 	printk("npu devm_memremap_pages success, addr is %lx\n",
 			(uintptr_t)phx_dev->pci_mem_va);
-	phx_dev->remap = 1;
+		phx_dev->remap = 1;
 		phx_dev->segments = NULL;
 		phx_dev->num_segments = 0;
 
@@ -571,8 +575,22 @@ static const struct file_operations phxfs_chr_fops = {
     .mmap = phxfs_mmap,
 };
 
+static ssize_t pci_bdf_show(struct device *cdev_device,
+                            struct device_attribute *attr, char *buf) {
+	struct phxfs_dev *phxdev = dev_get_drvdata(cdev_device);
+	if (phxdev == NULL || phxdev->dev == NULL)
+		return -ENODEV;
+	return sprintf(buf, "%04x:%02x:%02x.%x\n",
+		       pci_domain_nr(phxdev->dev->bus),
+		       phxdev->dev->bus->number,
+		       PCI_SLOT(phxdev->dev->devfn),
+		       PCI_FUNC(phxdev->dev->devfn));
+}
+static DEVICE_ATTR_RO(pci_bdf);
+
 void phxfs_cdev_del(struct cdev *cdev, struct device *cdev_device,
                     struct phxfs_dev *dev) {
+	device_remove_file(cdev_device, &dev_attr_pci_bdf);
 	cdev_device_del(cdev, cdev_device);
 	if (dev->remap) {
 		if (dev->segments && dev->num_segments > 0) {
@@ -592,7 +610,7 @@ void phxfs_cdev_del(struct cdev *cdev, struct device *cdev_device,
 			dev->num_segments = 0;
 		} else if (dev->p2p_pgmap) {
 			/* Legacy single-segment cleanup */
-		devm_memunmap_pages(&dev->dev->dev, &dev->p2p_pgmap->pgmap);
+			devm_memunmap_pages(&dev->dev->dev, &dev->p2p_pgmap->pgmap);
 		}
 		dev->pci_mem_va = NULL;
 	}

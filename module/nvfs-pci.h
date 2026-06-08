@@ -219,6 +219,8 @@ static inline int nvfs_get_numa_node_from_pdevinfo(uint64_t pdevinfo) {
 
 struct pci_dev *nvfs_get_next_acs_device(struct pci_dev *from);
 
+extern int phxfs_numa_node;
+
 // one-time pci-distance table initialization
 void nvfs_fill_gpu2peer_distance_table_once(void);
 

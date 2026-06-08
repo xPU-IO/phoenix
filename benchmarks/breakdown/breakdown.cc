@@ -21,6 +21,8 @@
 static int TEST_REPEAT = 1000;
 static std::string file_path = "/mnt/phxfs1/6";
 static uint64_t io_size = 4ull * 1024 * 1024 * 1024;
+static int device_id = 0;
+static int phxfs_dev_id = -1;  // will be resolved via phxfs_find_dev_for_cuda_gpu
 static std::vector<unsigned long long> latency_vec;
 
 
@@ -52,7 +54,7 @@ void gds_io_test(){
     void *gpu_buffer;
     ssize_t result;
 
-    check_cudaruntimecall(cudaSetDevice(0));
+    check_cudaruntimecall(cudaSetDevice(device_id));
 
     get_time(start);
     status = cuFileDriverOpen();
@@ -138,7 +140,7 @@ void get_breakdown(void (*func)(), const std::string* op_name, long int op_cnt){
     unsigned long long *times;
     int repeat = 0;
 
-    times = new unsigned long long[op_cnt];
+    times = new unsigned long long[op_cnt]();
     latency_vec.clear();
     latency_vec.reserve(TEST_REPEAT * op_cnt);
     std::cout << "Start to get breakdown" << std::endl;
@@ -172,12 +174,10 @@ static std::string phxfs_op_name[] = {
 void phxfs_io_test(){
     struct timespec start, end;
     phxfs_fileid_t fid;
-    int ret, file_fd, device_id;
+    int ret, file_fd;
     uint64_t real_size = io_size;
     void *gpu_buffer;
     void *target_addr = NULL;
-
-    device_id = 0;
 
     check_cudaruntimecall(cudaSetDevice(device_id));
 
@@ -188,7 +188,7 @@ void phxfs_io_test(){
         return;
     }
     get_time(start);
-    ret = phxfs_open(device_id);
+    ret = phxfs_open(phxfs_dev_id);
     get_time(end);
     get_time_diff(start, end);
 
@@ -198,7 +198,7 @@ void phxfs_io_test(){
     }
 
     fid.fd = file_fd;
-    fid.deviceID = device_id;
+    fid.deviceID = phxfs_dev_id;
 
     if (io_size < 64 * 1024) {
         real_size = 64 * 1024;
@@ -250,16 +250,26 @@ void phxfs_io_test(){
 
 int main(int argc, char *argv[]) {
     int type = 0;
-    if (argc > 3){
+    if (argc > 5){
         file_path = argv[1];
         type = atoi(argv[2]);
         io_size = atoll(argv[3]);
         TEST_REPEAT = atoi(argv[4]);
+        device_id = atoi(argv[5]);
     } else {
-        std::cout << "Usage: " << argv[0] << " <file_path> <type> <io_size> <repeat>" << std::endl;
+        std::cout << "Usage: " << argv[0] << " <file_path> <type> <io_size> <repeat> <device_id>" << std::endl;
         return -1;
     }
     io_size *= 1024;
+    
+    // Resolve phxfs_dev_id from CUDA GPU ID for phxfs mode (type == 0)
+    if (type == 0) {
+        phxfs_dev_id = phxfs_find_dev_for_cuda_gpu(device_id);
+        if (phxfs_dev_id < 0) {
+            std::cerr << "No phxfs device found for CUDA GPU " << device_id << std::endl;
+            return -1;
+        }
+    }
     std::cout << file_path<< std::endl;
     std::cout << "io size" << io_size;
     if (type == 1)

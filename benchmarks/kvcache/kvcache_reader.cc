@@ -11,7 +11,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cuda_runtime.h>
-#include <sys/syscall.h>
 #include "phoenix.h"
 #include "kvcache_reader.hh"
 #include "cufile_sample_utils.h"
@@ -21,7 +20,9 @@ uint64_t MAX_BLOCKS_SIZE = 16 * 1024 * 1024; // 16MB
 std::string block_file = "/mnt/phxfs/data.bin";
 
 
-CuFileKVCacheReader::CuFileKVCacheReader(size_t max_batch_size_): max_batch_size(max_batch_size_) {
+CuFileKVCacheReader::CuFileKVCacheReader(size_t max_batch_size_, int device_id_)
+                    : device_id(device_id_), max_batch_size(max_batch_size_) {
+    check_cudaruntimecall(cudaSetDevice(this->device_id));
     CUfileError_t status = cuFileDriverOpen();
     if (status.err != CU_FILE_SUCCESS) {
         throw std::runtime_error("cuFile driver open failed: " + 
@@ -221,11 +222,25 @@ CuFileKVCacheReader::~CuFileKVCacheReader() {
     cuFileDriverClose();
 }
 
-PhxfsKVCacheReader::PhxfsKVCacheReader(size_t max_batch_size_, int device_id_) 
-                    : device_id(device_id_), max_batch_size(max_batch_size_) {
-    int ret = phxfs_open(this->device_id);
+PhxfsKVCacheReader::PhxfsKVCacheReader(size_t max_batch_size_, int gpu_id_, int phxfs_dev_id_) 
+                    : gpu_id(gpu_id_), max_batch_size(max_batch_size_) {
+    // Auto-detect phxfs_device_id: if not specified (-1), match CUDA GPU's PCI BDF
+    // against each /sys/class/phxfs-generic/phxfs_dev*/pci_bdf to find the correct device
+    if (phxfs_dev_id_ < 0) {
+        phxfs_dev_id = phxfs_find_dev_for_cuda_gpu(gpu_id);
+        if (phxfs_dev_id < 0) {
+            throw std::runtime_error("No phxfs device found for CUDA GPU " 
+                                     + std::to_string(gpu_id));
+        }
+    } else {
+        phxfs_dev_id = phxfs_dev_id_;
+    }
+    
+    std::cout << "  Phxfs Device ID: " << phxfs_dev_id << std::endl;
+    
+    int ret = phxfs_open(phxfs_dev_id);
     if (ret) {
-        throw std::runtime_error("cuFile driver open failed: " + std::to_string(ret));
+        throw std::runtime_error("phxfs_open failed for device " + std::to_string(phxfs_dev_id) + ": " + std::to_string(ret));
     }
     
     fd = open(block_file.c_str(), O_RDONLY | O_DIRECT);
@@ -246,7 +261,7 @@ PhxfsKVCacheReader::PhxfsKVCacheReader(size_t max_batch_size_, int device_id_)
             throw std::runtime_error("CUDA memory allocation failed");
         }
         
-        ret = phxfs_regmem(this->device_id, devPtrs[i], MAX_BLOCKS_SIZE, &host_ptrs[i]);
+        ret = phxfs_regmem(phxfs_dev_id, devPtrs[i], MAX_BLOCKS_SIZE, &host_ptrs[i]);
         if (ret) {
             throw std::runtime_error("Buffer register failed");
         }
@@ -421,17 +436,17 @@ void PhxfsKVCacheReader::process_all_sequences() {
 PhxfsKVCacheReader::~PhxfsKVCacheReader() {
     io_uring_queue_exit(&ring);
     for (size_t i = 0; i < max_batch_size; i++) {
-        phxfs_deregmem(this->device_id, devPtrs[i], MAX_BLOCKS_SIZE);
+        phxfs_deregmem(phxfs_dev_id, devPtrs[i], MAX_BLOCKS_SIZE);
         cudaFree(devPtrs[i]);
     }
     delete[] devPtrs;
     close(fd);
-    phxfs_close(this->device_id);
+    phxfs_close(phxfs_dev_id);
 }
 
 int main(int argc, char** argv) {
-    if (argc != 6) {
-        std::cerr << "Usage: " << argv[0] << " <type: phxfs|gds> <gpu_id> <trace_file> <block_size>" << std::endl;
+    if (argc < 6) {
+        std::cerr << "Usage: " << argv[0] << " <type: phxfs|gds|native> <gpu_id> <trace_file> <block_size> <block_file> [phxfs_device_id]" << std::endl;
         return 1;
     }
 
@@ -441,26 +456,33 @@ int main(int argc, char** argv) {
     std::string trace_file = argv[3];
     block_size = atoll(argv[4]);
     block_file = argv[5];
+    int phxfs_dev_id = (argc > 6) ? atoi(argv[6]) : -1;  // -1 = auto-detect
 
-    type = type_str == "phxfs" ? 0 : 1;
+    if (type_str == "phxfs")
+        type = 0;
+    else if (type_str == "native")
+        type = 2;
+    else
+        type = 1;
 
     std::cout << "KVCache Reader: " << std::endl
             << "  Type: " << type << std::endl
             << "  GPU ID: " << gpu_id << std::endl
             << "  Trace File: " << trace_file << std::endl
             << "  Block Size: " << block_size << std::endl
-            << "  Block File: " << block_file << std::endl;
+            << "  Block File: " << block_file << std::endl
+            << "  Phxfs Device ID: " << (phxfs_dev_id >= 0 ? std::to_string(phxfs_dev_id) : "auto") << std::endl;
 
     try {
         cudaSetDevice(gpu_id);
 
         BaseKVCacheReader *reader = nullptr;
         if (type == 0) {
-            reader = new PhxfsKVCacheReader();
-        } else if (type == 1) {
-            reader = new CuFileKVCacheReader();
+            reader = new PhxfsKVCacheReader(2048, gpu_id, phxfs_dev_id);
+        } else if (type == 2) {
+            reader = new KVCacheNativeReader(2048, gpu_id);
         } else {
-            throw std::invalid_argument("Invalid reader type");
+            reader = new CuFileKVCacheReader(256, gpu_id);
         }
         reader->load_sequences(trace_file);
         reader->process_all_sequences();

@@ -273,9 +273,25 @@ static void __nvfs_find_all_device_paths(uint64_t paths[][MAX_PCI_DEPTH],
 		pdevinfo = nvfs_pdevinfo(pdev);
 
 		if (PCI_DEV_GPU(class >> 8, pdev->vendor)) {
+			int dev_numa_node = pcibus_to_node(pdev->bus);
+
+			if (phxfs_numa_node >= 0 && dev_numa_node != phxfs_numa_node) {
+				printk("phxfs: skip GPU %04x:%02x:%02x.%d "
+				       "(numa_node=%d, target=%d)\n",
+				       pci_domain_nr(pdev->bus), pdev->bus->number,
+				       PCI_SLOT(pdev->devfn), PCI_FUNC(pdev->devfn),
+				       dev_numa_node, phxfs_numa_node);
+				continue;
+			}
+
+			printk("phxfs: keep GPU %04x:%02x:%02x.%d "
+			       "(numa_node=%d, index=%d)\n",
+			       pci_domain_nr(pdev->bus), pdev->bus->number,
+			       PCI_SLOT(pdev->devfn), PCI_FUNC(pdev->devfn),
+			       dev_numa_node, DEV_NUM);
 			gpu_info_table[DEV_NUM] = pdevinfo;
 			DEV_NUM++;
-		} 
+		}
 
 		printk("nvfs_pci pci device entry[%u] %04x:%02x:%02x:%d path:",
 			idx, pci_domain_nr(pdev->bus), pdev->bus->number,

@@ -402,7 +402,18 @@ int run_phxfs(GDSOpts opts){
 
     check_cudaruntimecall(cudaSetDevice(device));
 
-    ret = phxfs_open(opts.gpu_id);
+    // Auto-detect phxfs_device_id if not specified (-1)
+    int phxfs_dev_id = opts.phxfs_device_id;
+    if (phxfs_dev_id < 0) {
+        phxfs_dev_id = phxfs_find_dev_for_cuda_gpu(opts.gpu_id);
+        if (phxfs_dev_id < 0) {
+            pr_error("phxfs_find_dev_for_cuda_gpu failed for GPU " << opts.gpu_id);
+            return 1;
+        }
+    }
+    pr_info("Phxfs Device ID: " << phxfs_dev_id);
+
+    ret = phxfs_open(phxfs_dev_id);
 
     if (ret != 0) {
         pr_error("phxfs init failed: " << ret);
@@ -411,7 +422,7 @@ int run_phxfs(GDSOpts opts){
 
     fid = (phxfs_fileid_t){
         .fd = file_fd,
-        .deviceID = opts.gpu_id
+        .deviceID = phxfs_dev_id
     };
 
     chunk_size = opts.length / opts.num_threads;
@@ -423,7 +434,7 @@ int run_phxfs(GDSOpts opts){
         data->buffer = NULL;
         data->total_io_time = 0;
         data->io_operations = 0;
-        data->device_id = opts.gpu_id;
+        data->device_id = phxfs_dev_id;
         data->io_size = opts.io_size;
         data->depth = opts.io_depth;
         data->fd = file_fd;

@@ -10,6 +10,9 @@
 #include <unistd.h>
 #include <vector>
 #include <string>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
 
 #include "phoenix.h"
 
@@ -151,6 +154,55 @@ int phxfs_open(int deviceID) {
         }
     }
     return 0;
+}
+
+
+int phxfs_find_dev_for_cuda_gpu(int cuda_gpu_id) {
+    // 1. Get PCI BDF of the CUDA GPU
+    int cuda_domain, cuda_bus, cuda_device;
+    cudaError_t err;
+
+    err = cudaDeviceGetAttribute(&cuda_domain, cudaDevAttrPciDomainId, cuda_gpu_id);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "%s: cudaDeviceGetAttribute(PciDomainId) failed for GPU %d\n",
+                __func__, cuda_gpu_id);
+        return -1;
+    }
+    err = cudaDeviceGetAttribute(&cuda_bus, cudaDevAttrPciBusId, cuda_gpu_id);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "%s: cudaDeviceGetAttribute(PciBusId) failed for GPU %d\n",
+                __func__, cuda_gpu_id);
+        return -1;
+    }
+    err = cudaDeviceGetAttribute(&cuda_device, cudaDevAttrPciDeviceId, cuda_gpu_id);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "%s: cudaDeviceGetAttribute(PciDeviceId) failed for GPU %d\n",
+                __func__, cuda_gpu_id);
+        return -1;
+    }
+    // GPUs are typically on PCI function 0
+    int cuda_function = 0;
+
+    // 2. Iterate over /sys/class/phxfs-generic/phxfs_dev*/pci_bdf to find a match
+    for (int i = 0; i < PHXFS_MAX_DEVICES; i++) {
+        std::string sysfs_path = "/sys/class/phxfs-generic/phxfs_dev"
+                                 + std::to_string(i) + "/pci_bdf";
+        std::ifstream ifs(sysfs_path);
+        if (!ifs.is_open()) break;  // no more devices
+
+        // Parse BDF string: "0000:a0:00.0\n"
+        unsigned int domain, bus, device, function;
+        char sep1, sep2, sep3;
+        ifs >> std::hex >> domain >> sep1 >> bus >> sep2 >> device >> sep3 >> function;
+
+        if (domain   == (unsigned int)cuda_domain &&
+            bus      == (unsigned int)cuda_bus &&
+            device   == (unsigned int)cuda_device &&
+            function == (unsigned int)cuda_function) {
+            return i;  // found matching phxfs_dev
+        }
+    }
+    return -1;  // no matching phxfs device for this CUDA GPU
 }
 
 
