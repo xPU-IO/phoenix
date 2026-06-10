@@ -69,7 +69,7 @@ void unmap_and_release(struct p2p_vmap* map)
     }
 
     kfree(map);
-	printk("unmap_and_release\n");
+	phxfs_info("unmap_and_release\n");
 }
 
 
@@ -109,7 +109,7 @@ static void force_release_gpu_memory(struct p2p_vmap* map)
         kfree(gd);
         map->data = NULL;
 
-        printk("Nvidia driver forcefully reclaimed %lu GPU pages\n", map->n_addrs);
+        phxfs_warn("Nvidia driver forcefully reclaimed %lu GPU pages\n", map->n_addrs);
     	
 	}
 	unmap_and_release(map);
@@ -121,12 +121,12 @@ phxfs_mmap_buffer_t phxfs_check_and_bind_phony_buffer(u64 cpuvaddr, u64 length) 
     struct vm_area_struct *vma; 
 
     if (!cpuvaddr) { 
-        printk("phxfs_check_and_bind_phony_buffer get cpuvaddr error"); 
+        phxfs_err("phxfs_check_and_bind_phony_buffer get cpuvaddr error\n");
         goto out; 
     } 
 
     if (cpuvaddr % PAGE_SIZE) { 
-        printk("phxfs_check_and_bind_phony_buffer cpuvaddr not aligned"); 
+        phxfs_err("phxfs_check_and_bind_phony_buffer cpuvaddr not aligned\n");
         goto out; 
     } 
 
@@ -138,13 +138,13 @@ phxfs_mmap_buffer_t phxfs_check_and_bind_phony_buffer(u64 cpuvaddr, u64 length) 
     mbuffer = (phxfs_mmap_buffer_t)vma->vm_private_data; 
     if (mbuffer!= NULL) { 
         if (mbuffer->c_vaddr!= cpuvaddr || mbuffer->map_len!= length) { 
-            printk("reg region is not same as mmap region"); 
+            phxfs_warn("reg region is not same as mmap region\n");
             goto out; 
         } else { 
             return mbuffer; 
         } 
     } else { 
-        printk("vma found, ·but mbuffer is none!\n");
+        phxfs_warn("vma found, but mbuffer is none!\n");
         goto out; 
     } 
 
@@ -171,7 +171,7 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
     dev = mbuffer->dev;
     
     if (dev == NULL || dev->pci_mem_va == NULL) {
-        printk("phxfs_map_dev_addr_inner get npu info error\n");
+        phxfs_err("phxfs_map_dev_addr_inner get npu info error\n");
         ret = -ENOMEM;
         goto out;
     }
@@ -200,7 +200,7 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
     mbuffer->map = kmalloc(sizeof(struct p2p_vmap) + (nr_dev_pages - 1) * sizeof(uint64_t), GFP_KERNEL);
     if (mbuffer->map == NULL)
     {
-        printk("Failed to allocate mapping descriptor\n");
+        phxfs_err("Failed to allocate mapping descriptor\n");
         return -ENOMEM;
     }
 
@@ -221,7 +221,7 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
         {
             kfree(mbuffer->map);
         }
-        printk("Failed to allocate mapping descriptor\n");
+        phxfs_err("Failed to allocate mapping descriptor\n");
         ret = -ENOMEM;
         goto out;
     }
@@ -234,7 +234,7 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
     {
         if(gd->pages->pages[i]==NULL)
         {
-            printk("mem allocation not success, i is %d!\n",i);
+            phxfs_err("mem allocation not success, i is %d!\n",i);
             goto out;
         }
         dev_page_addrs[i] = gd->pages->pages[i]->physical_address;
@@ -251,7 +251,7 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
         pci_bar_off = dev_page_addrs[i] - mbuffer->dev->paddr;
         cpu_vaddr = (uint64_t)phxfs_bar_offset_to_va(mbuffer->dev, pci_bar_off);
         if (cpu_vaddr == 0) {
-            printk("phxfs_map_dev_addr_inner: bar_offset 0x%llx not in any segment\n",
+            phxfs_err("phxfs_map_dev_addr_inner: bar_offset 0x%llx not in any segment\n",
                    pci_bar_off);
             ret = -EFAULT;
             goto out;
@@ -267,7 +267,7 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
                              mbuffer->c_vaddr + k * PAGE_SIZE,
                              mbuffer->ppages[k]);
         if (ret) {
-            printk("vm_insert_page failed, k=%lu, ret=%d\n", k, ret);
+            phxfs_err("vm_insert_page failed, k=%lu, ret=%d\n", k, ret);
             goto out;
         }
     }
@@ -444,7 +444,7 @@ int phxfs_add_phony_buffer(struct file *filp, struct vm_area_struct *vma) {
         vma->vm_private_data = (void *)phxfs_mbuffer;
     } else {
        
-        printk("vma->vm_private_data!=NULL\n");
+        phxfs_warn("vma->vm_private_data!=NULL\n");
         goto error;
     }
 

@@ -11,6 +11,7 @@ PHOENIX_MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../build/mo
 # ===== Usage =====
 
 FORCE_UNLOAD=0
+DEBUG_MODE=0
 
 usage() {
     cat <<EOF
@@ -21,6 +22,7 @@ Load or unload the Phoenix (phoenixfs) kernel module.
 Options:
   -n, --numa <node>       NUMA node for Phoenix module (-1 for all nodes) [default: all]
   -d, --module-dir <dir>  Directory containing phoenixfs.ko [default: ${PHOENIX_MODULE_DIR}]
+  -v, --debug             Enable info-level debug logging (sets phxfs_debug=1)
   -f, --force             Force unload even if module is in use
   -h, --help              Show this help message
 
@@ -31,6 +33,9 @@ Commands:
 Examples:
   # Load on all NUMA nodes (default)
   sudo $(basename "$0")
+
+  # Load with debug logging enabled
+  sudo $(basename "$0") --debug
 
   # Load on a specific NUMA node only
   sudo $(basename "$0") --numa 0
@@ -64,7 +69,9 @@ load_module() {
     if lsmod | grep -q phoenixfs; then
         echo "Phoenix module already loaded"
         current_numa=$(cat /sys/module/phoenixfs/parameters/phxfs_numa_node 2>/dev/null || echo "N/A")
+        current_debug=$(cat /sys/module/phoenixfs/parameters/phxfs_debug 2>/dev/null || echo "N/A")
         echo "Current phxfs_numa_node=$(numa_display "${current_numa}") (expected: $(numa_display "${NUMA_NODE}"))"
+        echo "Current phxfs_debug=${current_debug} (expected: ${DEBUG_MODE})"
         return 0
     fi
 
@@ -78,7 +85,7 @@ load_module() {
         exit 1
     fi
 
-    insmod "${module_path}" phxfs_numa_node="${NUMA_NODE}"
+    insmod "${module_path}" phxfs_numa_node="${NUMA_NODE}" phxfs_debug="${DEBUG_MODE}"
 
     # Verify insmod success
     if ! lsmod | grep -q phoenixfs; then
@@ -87,12 +94,14 @@ load_module() {
         exit 1
     fi
 
-    echo "Phoenix module loaded with phxfs_numa_node=$(numa_display "${NUMA_NODE}")"
+    echo "Phoenix module loaded with phxfs_numa_node=$(numa_display "${NUMA_NODE}"), phxfs_debug=${DEBUG_MODE}"
 
     # Verify module parameters
     local verify_numa
     verify_numa=$(cat /sys/module/phoenixfs/parameters/phxfs_numa_node 2>/dev/null || echo "N/A")
-    echo "Verified: phxfs_numa_node=$(numa_display "${verify_numa}")"
+    local verify_debug
+    verify_debug=$(cat /sys/module/phoenixfs/parameters/phxfs_debug 2>/dev/null || echo "N/A")
+    echo "Verified: phxfs_numa_node=$(numa_display "${verify_numa}"), phxfs_debug=${verify_debug}"
 
     # Show kernel log
     dmesg | tail -20 | grep "phxfs:" || true
@@ -176,6 +185,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -f|--force)
             FORCE_UNLOAD=1
+            shift
+            ;;
+        -v|--debug)
+            DEBUG_MODE=1
             shift
             ;;
         -h|--help)

@@ -38,6 +38,7 @@ sudo ./scripts/tencent_env/setup_phoenix_module.sh [OPTIONS] [COMMAND]
 |------|--------|------|
 | `-n, --numa <node>` | `all`（即 `-1`） | NUMA 节点过滤。`-1` 或不指定表示对所有 NUMA 节点生效；指定具体数字（如 `0`、`1`）则仅对该节点生效 |
 | `-d, --module-dir <dir>` | `build/module` | `phoenixfs.ko` 所在目录 |
+| `-v, --debug` | 关闭 | 启用 info 级别调试日志（设置 `phxfs_debug=1`） |
 | `-f, --force` | - | 强制卸载（模块被占用时使用 `modprobe -r` 尝试卸载） |
 | `-h, --help` | - | 显示帮助信息 |
 
@@ -72,6 +73,9 @@ numactl --hardware
 # 默认加载：对所有 NUMA 节点生效
 sudo ./scripts/tencent_env/setup_phoenix_module.sh
 
+# 加载并启用 info 级别调试日志
+sudo ./scripts/tencent_env/setup_phoenix_module.sh --debug
+
 # 仅对 NUMA 节点 0 上的 GPU 生效
 sudo ./scripts/tencent_env/setup_phoenix_module.sh --numa 0
 
@@ -97,9 +101,10 @@ sudo ./scripts/tencent_env/setup_phoenix_module.sh -f unload
 $ sudo ./scripts/tencent_env/setup_phoenix_module.sh
 Phoenix module already loaded
 Current phxfs_numa_node=all (expected: all)
+Current phxfs_debug=0 (expected: 0)
 ```
 
-> 如需修改 NUMA 参数，需先卸载再重新加载。
+> 如需修改 NUMA 或调试参数，需先卸载再重新加载。
 
 ## 加载流程详解
 
@@ -109,10 +114,11 @@ Current phxfs_numa_node=all (expected: all)
 2. **重复加载检测**：通过 `lsmod` 检查模块是否已加载，已加载则显示当前参数并退出
 3. **NVIDIA 驱动初始化验证**：执行 `nvidia-smi` 确保驱动已加载
 4. **模块文件检查**：确认 `phoenixfs.ko` 存在于指定目录
-5. **执行 insmod**：加载模块并传入 `phxfs_numa_node` 参数
+5. **执行 insmod**：加载模块并传入 `phxfs_numa_node` 和 `phxfs_debug` 参数
 6. **加载结果验证**：
    - 通过 `lsmod` 确认模块出现在内核模块列表中
-   - 通过 `/sys/module/phoenixfs/parameters/phxfs_numa_node` 验证参数是否正确传入
+   - 通过 `/sys/module/phoenixfs/parameters/phxfs_numa_node` 验证 NUMA 参数是否正确传入
+   - 通过 `/sys/module/phoenixfs/parameters/phxfs_debug` 验证调试参数是否正确传入
    - 显示 `dmesg` 中 `phxfs:` 开头的内核日志
 
 ## 卸载流程详解
@@ -154,8 +160,35 @@ sudo ./scripts/tencent_env/setup_phoenix_module.sh -f unload
 
 ## 运行时参数查看与修改
 
-模块加载后，可通过 sysfs 查看 `phxfs_numa_node` 参数：
+模块加载后，可通过 sysfs 查看和修改模块参数：
+
+### NUMA 节点参数
 
 ```bash
 # 查看当前值
 cat /sys/module/phoenixfs/parameters/phxfs_numa_node
+```
+
+> **注意**：`phxfs_numa_node` 仅在模块加载时生效，运行时修改不会重新过滤 GPU 设备。如需更改 NUMA 绑定，需卸载后重新加载。
+
+### 调试日志参数
+
+Phoenix 模块提供 `phxfs_debug` 参数控制 info 级别日志的输出（详见 [日志宏体系文档](../phxfs-logging.md)）：
+
+```bash
+# 查看当前调试状态
+cat /sys/module/phoenixfs/parameters/phxfs_debug
+
+# 运行时启用 info 级别日志
+echo 1 | sudo tee /sys/module/phoenixfs/parameters/phxfs_debug
+
+# 运行时关闭 info 级别日志
+echo 0 | sudo tee /sys/module/phoenixfs/parameters/phxfs_debug
+```
+
+| `phxfs_debug` 值 | 行为 |
+|-------------------|------|
+| `0`（默认） | 不输出 `phxfs_info` 级别日志；`phxfs_warn` 和 `phxfs_err` 仍正常输出 |
+| `1` | 输出所有级别日志，包括 `phxfs_info` |
+
+> **提示**：启用 `phxfs_debug` 会增加内核日志量，建议仅在调试问题时开启，调试完毕后及时关闭。

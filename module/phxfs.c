@@ -49,6 +49,10 @@ int phxfs_numa_node = -1;
 module_param(phxfs_numa_node, int, 0644);
 MODULE_PARM_DESC(phxfs_numa_node, "Target NUMA node for GPU filtering (-1 = no filter)");
 
+int phxfs_debug = 0;
+module_param(phxfs_debug, int, 0644);
+MODULE_PARM_DESC(phxfs_debug, "Enable info-level logging (0=off, 1=on)");
+
 #define PHXFS_PAT_PATH "/sys/kernel/debug/x86/pat_memtype_list"
 #define PHXFS_PAT_BUF_SIZE (64 * 1024) /* PAT file typically < 16 KiB */
 
@@ -80,7 +84,7 @@ static int phxfs_read_pat_conflicts(u64 bar_start, u64 bar_len,
 
 	filp = filp_open(PHXFS_PAT_PATH, O_RDONLY, 0);
 	if (IS_ERR(filp)) {
-		printk(KERN_WARNING "phxfs: cannot open %s (err=%ld), "
+		phxfs_warn("phxfs: cannot open %s (err=%ld), "
 		       "skipping PAT conflict detection\n",
 		       PHXFS_PAT_PATH, PTR_ERR(filp));
 		kfree(buf);
@@ -91,7 +95,7 @@ static int phxfs_read_pat_conflicts(u64 bar_start, u64 bar_len,
 	filp_close(filp, NULL);
 
 	if (ret <= 0) {
-		printk(KERN_WARNING "phxfs: failed to read %s (ret=%d)\n",
+		phxfs_warn("phxfs: failed to read %s (ret=%d)\n",
 		       PHXFS_PAT_PATH, ret);
 		kfree(buf);
 		return 0;
@@ -129,7 +133,7 @@ static int phxfs_read_pat_conflicts(u64 bar_start, u64 bar_len,
 						conflicts[n_conflicts].end = clipped_end;
 						n_conflicts++;
 					} else {
-						printk(KERN_WARNING "phxfs: too many PAT conflicts "
+						phxfs_warn("phxfs: too many PAT conflicts "
 						       "(>%d), some skipped\n", max_entries);
 						break;
 					}
@@ -172,7 +176,7 @@ static int phxfs_compute_bar_segments(
 	usable_end = paddr + hbm_size - PHXFS_RESERVED_SIZE;
 
 	if (usable_end <= usable_start) {
-		printk(KERN_WARNING "phxfs: HBM too small for head/tail reservation "
+		phxfs_warn("phxfs: HBM too small for head/tail reservation "
 		       "(hbm_size=%llu MiB)\n", hbm_size / (1024 * 1024));
 		return -ENOSPC;
 	}
@@ -213,7 +217,7 @@ static int phxfs_compute_bar_segments(
 	}
 
 	if (n_segments == 0) {
-		printk(KERN_WARNING "phxfs: no remappable segments found\n");
+		phxfs_warn("phxfs: no remappable segments found\n");
 		kfree(block_skip);
 		return -ENOSPC;
 	}
@@ -286,14 +290,14 @@ static int phxfs_devm_memremap(struct phxfs_dev *phx_dev) {
 	int n_conflicts, n_segments;
 	int i, ret = 1;
 
-	printk(KERN_INFO "phxfs%d: BAR size=%llu MiB, paddr=0x%llx\n",
+	phxfs_info("phxfs%d: BAR size=%llu MiB, paddr=0x%llx\n",
 	       phx_dev->idx, phx_dev->size / (1024 * 1024), phx_dev->paddr);
 
 	/* Max blocks = usable region / unit size, used as upper bound for conflicts */
 	{
 		int max_blocks = (int)((phx_dev->size - 2 * PHXFS_RESERVED_SIZE) / PHXFS_REMAP_UNIT_SIZE);
 		if (max_blocks <= 0) {
-			printk(KERN_WARNING "phxfs%d: BAR too small for head/tail reservation\n",
+			phxfs_warn("phxfs%d: BAR too small for head/tail reservation\n",
 			       phx_dev->idx);
 			return -ENOSPC;
 		}
@@ -307,20 +311,20 @@ static int phxfs_devm_memremap(struct phxfs_dev *phx_dev) {
 						       conflicts, max_blocks);
 	}
 	if (n_conflicts < 0) {
-		printk(KERN_WARNING "phxfs%d: PAT conflict detection failed (%d), "
+		phxfs_warn("phxfs%d: PAT conflict detection failed (%d), "
 		       "falling back to full BAR remap\n", phx_dev->idx, n_conflicts);
 		kfree(conflicts);
 		/* Fallback: remap entire BAR as single segment */
 		goto fallback_single;
 	}
 
-	printk(KERN_INFO "phxfs%d: found %d PAT conflict(s) in BAR region\n",
+	phxfs_info("phxfs%d: found %d PAT conflict(s) in BAR region\n",
 	       phx_dev->idx, n_conflicts);
 
 	for (i = 0; i < n_conflicts; i++) {
 		u64 off_start = conflicts[i].start - phx_dev->paddr;
 		u64 off_end = conflicts[i].end - phx_dev->paddr;
-		printk(KERN_INFO "phxfs%d:   conflict %d: offset 0x%llx-0x%llx "
+		phxfs_info("phxfs%d:   conflict %d: offset 0x%llx-0x%llx "
 		       "(%llu MiB - %llu MiB)\n",
 		       phx_dev->idx, i, off_start, off_end,
 		       off_start / (1024 * 1024), off_end / (1024 * 1024));
@@ -332,16 +336,16 @@ static int phxfs_devm_memremap(struct phxfs_dev *phx_dev) {
 	kfree(conflicts);
 
 	if (n_segments <= 0) {
-		printk(KERN_WARNING "phxfs%d: no valid segments computed, "
+		phxfs_warn("phxfs%d: no valid segments computed, "
 		       "falling back to full BAR remap\n", phx_dev->idx);
 		goto fallback_single;
 	}
 
-	printk(KERN_INFO "phxfs%d: computed %d segment(s) after conflict skipping + merging\n",
+	phxfs_info("phxfs%d: computed %d segment(s) after conflict skipping + merging\n",
 	       phx_dev->idx, n_segments);
 	for (i = 0; i < n_segments; i++) {
 		u64 off = segs[i].phys_start - phx_dev->paddr;
-		printk(KERN_INFO "phxfs%d:   segment %d: offset 0x%llx, size %llu MiB\n",
+		phxfs_info("phxfs%d:   segment %d: offset 0x%llx, size %llu MiB\n",
 		       phx_dev->idx, i, off, segs[i].size / (1024 * 1024));
 	}
 
@@ -368,7 +372,7 @@ static int phxfs_devm_memremap(struct phxfs_dev *phx_dev) {
 
 		segs[i].va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
 		if (IS_ERR_OR_NULL(segs[i].va)) {
-			printk(KERN_WARNING "phxfs%d: devm_memremap_pages failed for "
+			phxfs_warn("phxfs%d: devm_memremap_pages failed for "
 			       "segment %d (offset 0x%llx, size %llu MiB), err=%ld\n",
 			       phx_dev->idx, i,
 			       segs[i].phys_start - phx_dev->paddr,
@@ -382,7 +386,7 @@ static int phxfs_devm_memremap(struct phxfs_dev *phx_dev) {
 
 		segs[i].p2p_pgmap = p2p_pgmap;
 		phx_dev->num_segments++;
-		printk(KERN_INFO "phxfs%d: segment %d remapped: offset 0x%llx, "
+		phxfs_info("phxfs%d: segment %d remapped: offset 0x%llx, "
 		       "size %llu MiB, va=0x%lx\n",
 		       phx_dev->idx, i,
 		       segs[i].phys_start - phx_dev->paddr,
@@ -391,7 +395,7 @@ static int phxfs_devm_memremap(struct phxfs_dev *phx_dev) {
 	}
 
 	if (phx_dev->num_segments == 0) {
-		printk(KERN_ERR "phxfs%d: all segment remaps failed\n", phx_dev->idx);
+		phxfs_err("phxfs%d: all segment remaps failed\n", phx_dev->idx);
 		ret = -ENOMEM;
 		goto err_cleanup;
 	}
@@ -408,7 +412,7 @@ static int phxfs_devm_memremap(struct phxfs_dev *phx_dev) {
 		u64 total_remapped = 0;
 		for (i = 0; i < phx_dev->num_segments; i++)
 			total_remapped += segs[i].size;
-		printk(KERN_INFO "phxfs%d: successfully remapped %d segments, "
+		phxfs_info("phxfs%d: successfully remapped %d segments, "
 		       "total %llu MiB out of %llu MiB HBM\n",
 		       phx_dev->idx, phx_dev->num_segments,
 		       total_remapped / (1024 * 1024),
@@ -427,7 +431,7 @@ fallback_single:
 		if (!phx_dev->p2p_pgmap)
 			return -ENOMEM;
 
-	printk("npu_devm_memremap 1\n");
+	phxfs_info("npu_devm_memremap 1\n");
 		pgmap = &phx_dev->p2p_pgmap->pgmap;
 
 		// pgmap->range.start = phx_dev->paddr;
@@ -441,7 +445,7 @@ fallback_single:
 		phx_dev->pgmap_res.end = phx_dev->paddr + phx_dev->size - 1;
 		phx_dev->pgmap_res.flags = IORESOURCE_MEM;
 
-	printk("npu->pgmap->res.start is %llx, end is %llx\n",
+	phxfs_info("npu->pgmap->res.start is %llx, end is %llx\n",
     	phx_dev->pgmap_res.start,
        	phx_dev->pgmap_res.end);
 
@@ -450,22 +454,22 @@ fallback_single:
 
 		phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
 
-	printk("npu numa is %d\n", phx_dev->dev->dev.numa_node);
+	phxfs_info("npu numa is %d\n", phx_dev->dev->dev.numa_node);
 
 		if (IS_ERR_OR_NULL(phx_dev->pci_mem_va)) {
-			printk(KERN_ERR "phxfs%d: fallback devm_memremap_pages failed\n",
+			phxfs_err("phxfs%d: fallback devm_memremap_pages failed\n",
 			       phx_dev->idx);
 			devm_kfree(&phx_dev->dev->dev, phx_dev->p2p_pgmap);
 			return -ENOMEM;
 		}
 
-	printk("npu devm_memremap_pages success, addr is %lx\n",
+	phxfs_info("npu devm_memremap_pages success, addr is %lx\n",
 			(uintptr_t)phx_dev->pci_mem_va);
 		phx_dev->remap = 1;
 		phx_dev->segments = NULL;
 		phx_dev->num_segments = 0;
 
-		printk(KERN_INFO "phxfs%d: fallback single-segment remap, va=0x%lx\n",
+		phxfs_info("phxfs%d: fallback single-segment remap, va=0x%lx\n",
 		       phx_dev->idx, (unsigned long)phx_dev->pci_mem_va);
 		return 0;
 	}
@@ -496,7 +500,7 @@ static int phxfs_ctrl_init(struct phxfs_ctrl *dev_ctrl, u32 dev_num) {
 		fn = gpu_info_table[i] & 0xFF;
 		dev_ctrl->phx_dev[i].dev = pci_get_domain_bus_and_slot(0, bus, fn);
 		if (dev_ctrl->phx_dev[i].dev == NULL) {
-			printk("npu%u: pci_get_domain_bus_and_slot failed\n", i);
+			phxfs_warn("npu%u: pci_get_domain_bus_and_slot failed\n", i);
 			return -1;
 		}
 		// for (j = 0; j < PCI_STD_NUM_BARS; j++) {
@@ -511,7 +515,7 @@ static int phxfs_ctrl_init(struct phxfs_ctrl *dev_ctrl, u32 dev_num) {
 		dev_ctrl->phx_dev[i].remap = 0;
 		dev_ctrl->phx_dev[i].segments = NULL;
 		dev_ctrl->phx_dev[i].num_segments = 0;
-		printk("npu%u: bus is %x, size is %llu, paddr is %llx\n", i,
+		phxfs_info("npu%u: bus is %x, size is %llu, paddr is %llx\n", i,
 			dev_ctrl->phx_dev[i].dev->bus->number, dev_ctrl->phx_dev[i].size,
 			dev_ctrl->phx_dev[i].paddr);
 		ret = phxfs_devm_memremap(&dev_ctrl->phx_dev[i]);
@@ -529,7 +533,7 @@ static int phxfs_open(struct inode *inode, struct file *filp) {
 
 	if (file_name != NULL) {
 		dev_idx = extract_trailing_number(file_name);
-		printk("phxfs_open %s, npu_idx is %d\n", file_name, dev_idx);
+		phxfs_info("phxfs_open %s, npu_idx is %d\n", file_name, dev_idx);
 		if (dev_idx < 0 || dev_idx >= ctrl.dev_num) {
 			ret = -1;
 			goto out;
@@ -537,7 +541,7 @@ static int phxfs_open(struct inode *inode, struct file *filp) {
 		filp->private_data = &ctrl.phx_dev[dev_idx];
 	}
 out:
-	printk("phxfs_open %d\n", ret);
+	phxfs_info("phxfs_open %d\n", ret);
 	return ret;
 }
 
@@ -677,7 +681,7 @@ int phxfs_cdev_init(struct phxfs_ctrl *ctrl) {
 		goto unregister_generic_phxfs;
 		}
 	}
-	printk("phxfs_cdev_init success!\n");
+	phxfs_info("phxfs_cdev_init success!\n");
 	return 0;
 
 unregister_generic_phxfs:
@@ -692,7 +696,7 @@ static int __init phxfs_init(void) {
 	int ret, i;
 
 	if (nvfs_nvidia_p2p_init()) {
-		printk("Could not load nvidia_p2p* symbols\n");
+		phxfs_warn("Could not load nvidia_p2p* symbols\n");
 		ret = -EOPNOTSUPP;
 		return -1;
 	}
@@ -707,20 +711,20 @@ static int __init phxfs_init(void) {
 		}
 	}
 
-	printk("devdrv_get_devnum num:%d\n", npu_num);
+	phxfs_info("devdrv_get_devnum num:%d\n", npu_num);
 
 	if (npu_num <= 0 || npu_num > MAX_DEV_NUM) {
-		printk("devdrv_get_devnum error:%u\n", npu_num);
+		phxfs_err("devdrv_get_devnum error:%u\n", npu_num);
 		return -1;
 	}
 	ret = phxfs_ctrl_init(&ctrl, npu_num);
 	if (ret != 0) {
-		printk("npu_ctrl_init error:%d\n", ret);
+		phxfs_err("npu_ctrl_init error:%d\n", ret);
 		return -1;
 	}
 	ret = phxfs_cdev_init(&ctrl);
 	if (ret) {
-		printk("phxfs_init error!\n");
+		phxfs_err("phxfs_init error!\n");
 		return -1;
 	}
 	phxfs_mbuffer_init();
@@ -739,7 +743,7 @@ static void __exit phxfs_exit(void) {
 	unregister_chrdev_region(phxfs_chr_devt, PHXFS_MINORS);
 	ida_destroy(&phxfs_chr_minor_ida);
 
-	printk("Good bye!");
+	phxfs_info("Good bye!\n");
 }
 
 module_init(phxfs_init);

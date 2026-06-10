@@ -8,8 +8,24 @@
 #include <linux/genalloc.h>
 #include <linux/cdev.h>
 #include <linux/pci.h>
+#include <linux/printk.h>
 
 #define MAX_DEV_NUM 16
+
+/* Phoenix logging macros */
+extern int phxfs_debug;
+
+#define phxfs_info(fmt, ...)					\
+	do {							\
+		if (phxfs_debug)				\
+			printk(KERN_INFO fmt, ##__VA_ARGS__);	\
+	} while (0)
+
+#define phxfs_warn(fmt, ...)					\
+	printk(KERN_WARNING fmt, ##__VA_ARGS__)
+
+#define phxfs_err(fmt, ...)					\
+	printk(KERN_ERR fmt, ##__VA_ARGS__)
 
 #define PHXFS_REMAP_UNIT_SIZE  ((u64)16 * 1024 * 1024)  /* 16 MiB per remap unit */
 #define PHXFS_RESERVED_SIZE    ((u64)128 * 1024 * 1024)  /* 128 MiB reserved at head/tail */
