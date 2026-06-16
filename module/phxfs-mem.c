@@ -8,6 +8,8 @@
 
 #include <linux/memory.h> 
 #include <linux/hashtable.h>
+#include <linux/slab.h>
+#include <linux/vmalloc.h>
 
  
 #include "phxfs-mem.h"  
@@ -179,7 +181,8 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
     u64 cpu_vaddr;
     unsigned long total_pages;
     unsigned long k;
-    int ret, i, j;
+    bool pages_pinned = false;
+    int ret = 0, i, j;
 
     if (!mbuffer)
         return -EINVAL;
@@ -208,19 +211,38 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
         mbuffer->host_page_num = nr_dev_pages * (mbuffer->subpage_num);
     }
     
-    dev_page_addrs = kzalloc(nr_dev_pages * sizeof(u64), GFP_KERNEL);
+    /*
+     * The arrays below scale linearly with the registered region size.
+     * A single kmalloc() is capped at KMALLOC_MAX_SIZE (~4MiB of physically
+     * contiguous memory). ppages needs region/512 bytes, hitting 4MiB exactly
+     * at a 2GiB registration -- this is the real root cause of the historical
+     * "2GB per mmap" limit. Use kvmalloc() so large arrays transparently fall
+     * back to vmalloc() and the limit becomes the BAR/HBM size instead.
+     */
+    dev_page_addrs = kvcalloc(nr_dev_pages, sizeof(u64), GFP_KERNEL);
     if (dev_page_addrs == NULL) {
         ret = -ENOMEM;
         goto out;
     }
 
-    mbuffer->ppages = (struct page **) kmalloc(mbuffer->host_page_num * sizeof(struct page *), GFP_KERNEL);
+    mbuffer->ppages = (struct page **) kvmalloc_array(mbuffer->host_page_num,
+                                                      sizeof(struct page *), GFP_KERNEL);
+    if (mbuffer->ppages == NULL) {
+        phxfs_err("Failed to allocate ppages array (%lu entries)\n", mbuffer->host_page_num);
+        ret = -ENOMEM;
+        goto out;
+    }
 
+    /*
+     * map descriptor scales as region/8192, only exceeds kmalloc above ~32GiB;
+     * kept on kmalloc so release_gpu_memory()'s kfree() path stays valid.
+     */
     mbuffer->map = kmalloc(sizeof(struct p2p_vmap) + (nr_dev_pages - 1) * sizeof(uint64_t), GFP_KERNEL);
     if (mbuffer->map == NULL)
     {
         phxfs_err("Failed to allocate mapping descriptor\n");
-        return -ENOMEM;
+        ret = -ENOMEM;
+        goto out;
     }
 
     mbuffer->map->page_size = GPU_PAGE_SIZE;
@@ -236,24 +258,28 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
     gd = kmalloc(sizeof(struct gpu_region), GFP_KERNEL);
     if (gd == NULL)
     {
-        if(mbuffer->map!=NULL)
-        {
-            kfree(mbuffer->map);
-        }
-        phxfs_err("Failed to allocate mapping descriptor\n");
+        phxfs_err("Failed to allocate gpu_region\n");
         ret = -ENOMEM;
         goto out;
     }
     gd->pages = NULL;
     mbuffer->map->data = (struct gpu_region*)gd;
     ret = nvfs_nvidia_p2p_get_pages(0, 0, mbuffer->map->gpuvaddr, GPU_PAGE_SIZE * mbuffer->map->n_addrs, &gd->pages, 
-        (void (*)(void*)) force_release_gpu_memory, mbuffer->map);   
-    
+        (void (*)(void*)) force_release_gpu_memory, mbuffer->map);
+    if (ret != 0 || gd->pages == NULL) {
+        phxfs_err("nvfs_nvidia_p2p_get_pages failed, ret=%d\n", ret);
+        if (ret == 0)
+            ret = -ENOMEM;
+        goto out;
+    }
+    pages_pinned = true;
+
     for(i = 0; i < mbuffer->map->n_addrs; i++)
     {
         if(gd->pages->pages[i]==NULL)
         {
             phxfs_err("mem allocation not success, i is %d!\n",i);
+            ret = -ENOMEM;
             goto out;
         }
         dev_page_addrs[i] = gd->pages->pages[i]->physical_address;
@@ -301,18 +327,39 @@ int phxfs_map_dev_addr_inner(phxfs_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_l
     }
     **/
     mbuffer->remap = 1;
-    return ret;
-    
+    return 0;
+
 out:
-    if (gd != NULL)
+    /*
+     * Error teardown. If GPU pages were pinned, release them ourselves
+     * (nvfs_nvidia_p2p_put_pages() does not invoke the registered
+     * force-release callback), then free the descriptors. This fixes the
+     * previous NULL-deref / use-after-free that panicked the kernel when a
+     * registration above ~2GiB failed (ppages kmalloc returned NULL and the
+     * unchecked get_pages / out: path freed the still-referenced map & gd).
+     */
+    if (pages_pinned && gd != NULL && gd->pages != NULL) {
+        nvfs_nvidia_p2p_put_pages(0, 0, devaddr, gd->pages);
+        gd->pages = NULL;
+    }
+    if (gd != NULL) {
         kfree(gd);
-    if (mbuffer->map != NULL)
+        if (mbuffer->map != NULL)
+            mbuffer->map->data = NULL;
+    }
+    if (mbuffer->map != NULL) {
         kfree(mbuffer->map);
-    if (mbuffer->ppages != NULL)
-        kfree(mbuffer->ppages);
-    if (dev_page_addrs != NULL)
-        kfree(dev_page_addrs);
-    
+        mbuffer->map = NULL;
+    }
+    if (mbuffer->ppages != NULL) {
+        kvfree(mbuffer->ppages);
+        mbuffer->ppages = NULL;
+    }
+    if (dev_page_addrs != NULL) {
+        kvfree(dev_page_addrs);
+        mbuffer->dev_page_addrs = NULL;
+    }
+
     return ret;
 }
 
@@ -352,10 +399,10 @@ static void phxfs_mbuffer_free(phxfs_mmap_buffer_t mbuffer) {
     }
 
     if (mbuffer->dev_page_addrs != NULL) {
-        kfree(mbuffer->dev_page_addrs);
+        kvfree(mbuffer->dev_page_addrs);
     }
     if (mbuffer->ppages != NULL) {
-        kfree(mbuffer->ppages);
+        kvfree(mbuffer->ppages);
     }
     
     mbuffer->dev = NULL;

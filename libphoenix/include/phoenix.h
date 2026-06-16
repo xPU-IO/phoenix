@@ -26,26 +26,12 @@ typedef struct phxfs_fileid {
     int deviceID;
 } phxfs_fileid_t;
 
-struct xfer_addr {
-    void *target_addr;
-    size_t nbyte;
-};
-
-#define MAX_NR_ADDR 4
-struct phxfs_xfer_addr{
-    uint32_t nr_xfer_addrs;
-    struct xfer_addr x_addrs[1];
-};
-
-// para for a single io operation
-
 int phxfs_open(int device_id);
 int phxfs_close(int device_id);
 int phxfs_find_dev_for_cuda_gpu(int cuda_gpu_id);
 ssize_t phxfs_read(phxfs_fileid_t fid, void *buf, off_t buf_offset, ssize_t nbyte, off_t f_offset);
 ssize_t phxfs_write(phxfs_fileid_t fid, void *buf, off_t buf_offset, ssize_t nbyte, off_t f_offset);
 
-struct phxfs_xfer_addr * phxfs_do_xfer_addr(int device_id, const void *buf, off_t buf_offset, size_t nbyte);
 int phxfs_regmem(int device_id, const void *addr, size_t len, void **target_addr);
 int phxfs_deregmem(int device, const void *addr, size_t len);
 
