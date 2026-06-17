@@ -1,4 +1,5 @@
 #include <asm/page.h>
+#include <linux/version.h>
 #include <linux/cdev.h>
 #include <linux/ctype.h> //for isdigit()
 #include <linux/device.h>
@@ -372,9 +373,15 @@ static int phxfs_devm_memremap(struct phxfs_dev *phx_dev) {
 		}
 
 		pgmap = &p2p_pgmap->pgmap;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+		pgmap->range.start = segs[i].phys_start;
+		pgmap->range.end = segs[i].phys_start + segs[i].size - 1;
+		pgmap->nr_range = 1;
+#else
 		pgmap->res.start = segs[i].phys_start;
 		pgmap->res.end = segs[i].phys_start + segs[i].size - 1;
 		pgmap->res.flags = IORESOURCE_MEM;
+#endif
 		pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
 
 		segs[i].va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
@@ -441,22 +448,18 @@ fallback_single:
 	phxfs_info("npu_devm_memremap 1\n");
 		pgmap = &phx_dev->p2p_pgmap->pgmap;
 
-		// pgmap->range.start = phx_dev->paddr;
-		// pgmap->range.end = phx_dev->paddr + phx_dev->size - 1;
-		// printk("npu->pgmap->res.start is %llx, end is %llx\n", pgmap->range.start,
-		// 		pgmap->range.end);
-		// pgmap->nr_range = 1;
-		// pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+		pgmap->range.start = phx_dev->paddr;
+		pgmap->range.end = phx_dev->paddr + phx_dev->size - 1;
+		pgmap->nr_range = 1;
+#else
 		phx_dev->pgmap_res.start = phx_dev->paddr;
 		phx_dev->pgmap_res.end = phx_dev->paddr + phx_dev->size - 1;
 		phx_dev->pgmap_res.flags = IORESOURCE_MEM;
-
 	phxfs_info("npu->pgmap->res.start is %llx, end is %llx\n",
-    	phx_dev->pgmap_res.start,
-       	phx_dev->pgmap_res.end);
-
+		phx_dev->pgmap_res.start, phx_dev->pgmap_res.end);
 		pgmap->res = phx_dev->pgmap_res;
+#endif
 		pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
 
 		phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
